@@ -23,6 +23,18 @@ parameters:
   Finding:
     type: StringMap
     description: The input from Step function for finding
+  Type:
+    type: String
+    description: One of three possible types of findings
+  RelatedResources:
+    type: StringList
+    description: List of resources related to current resource
+  VPCFlowLogs:
+    type: StringList
+    description: List of VPC Flow logs related to the current resource
+  AccessLogs:
+    type: StringList
+    description: S3 Access Logs or API Gateway Access logs if available
   AutomationAssumeRole:
     type: String
     description: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
@@ -56,9 +68,37 @@ mainSteps:
         %%SCRIPT=cis_parse_input.py%%
     isEnd: false
 
+  - name: CheckForSideEffects
+    action: 'aws:branch'
+    inputs:
+      Choices:
+      - NextStep: SideEffects
+        Variable: "{{ Type }}"
+        StringEquals: "type2"
+      - NextStep: Remediation
+        Varaible: "{{ Type }}"
+        StringEquals: "type3"
+      Default:
+        Remediation
+
+  - name: SideEffects
+    action: 'aws:executeAutomation'
+    isEnd: false
+    isCritical: True
+    onFailure: Abort
+    nextStep: Remediation
+    inputs:
+      DocumentName: SHARR-CreateAndAttachNewSecurityGroup
+      RuntimeParamaters:
+        GroupId: '{{ ParseInput.GroupId }}'
+        Resources: '{{ RelatedResources }}'
+        AutomationAssumeRole: 'arn:{{global:AWS_PARTITION}}:iam::{{global:ACCOUNT_ID}}:role/SO0111-CreateAndAttachSecurityGroup_{{global:REGION}}'
+
   - name: Remediation
     action: 'aws:executeAutomation'
     isEnd: false
+    isCritical: True
+    onFailure: Abort
     inputs:
       DocumentName: SHARR-RemoveVPCDefaultSecurityGroupRules
       RuntimeParameters:

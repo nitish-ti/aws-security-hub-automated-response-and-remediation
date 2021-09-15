@@ -1,0 +1,6 @@
+aws-sharr-member.yaml
+aws-sharr-deploy.yaml
+deployment/global-s3-assets/*
+deployment/regional-s3-assets/*
+deployment/setenv.sh
+deployment/temp/source/*

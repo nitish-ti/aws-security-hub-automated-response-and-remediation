@@ -1,0 +1,127 @@
+description: |
+  ### Document name - AWSConfigSideEffects-CreateANDAttachNewSecurityGroups
+
+  ## What does this document do?
+  Created a new security group to replace the default security group, attaching it to all instances currently relying on the default sg
+
+  ## Input Parameters
+  * GroupId: (Required) The unique ID of the security group.
+  * Resources: (Required) The IDs of resources attached to the current Security Group
+  * AutomationAssumeRole: (Required) The ARN of the role that allows Automation to perform the actions on your behalf.
+
+  ## Output Parameters
+  * AttachGroupsAndVerify.Output - Success message or failure exception.
+  assumeRole: "{{ AutomationAssumeRole }}"
+parameters:
+  GroupId:
+    type: String
+    description: (Required) The unique ID of the security group.
+    allowedPattern: "sg-[a-z0-9]+$"
+  Resources:
+    type: StringList
+    description: Ids of resources attached to current security group
+  AutomationAssumeRole:
+    type: String
+    description: (Required) The ARN of the role that allows Automation to perform the actions on your behalf.
+    allowedPattern: ^arn:(aws[a-zA-Z-]*)?:iam::\d{12}:role/[\w+=,.@-]+$
+
+outputs:
+  - AttachGroupsAndVerify.Output
+
+mainsteps:
+  - name: CheckDefaultSecurityGroup
+    action: aws:assertAwsResourceProperty
+    isCritical: True
+    onFailure: Abort
+    maxAttempts: 3
+    timeoutSeconds: 20
+    description: |
+      ## CheckDefaultSecurityGroup
+      Verifies that the security group name does match `default`. If the group name does match `default`, go to the next step: DescribeSecurityGroups.
+    inputs:
+      Service: ec2
+      Api: DescribeSecurityGroups
+      GroupIds:
+        - "{{ GroupId }}"
+      PropertySelector: "$.SecurityGroups[0].GroupName"
+      DesiredValues:
+        - "default"
+    nextStep: CreateNewSecurityGroup
+
+  - name: CreateNewSecurityGroup
+    action: "aws:executeScript"
+    isCritical: True
+    onFailure: Abort
+    maxAttempts: 3
+    timeoutSeconds: 180
+    isEnd: false
+    description: |
+      ## CreateNewSecurityGroup
+      Create New Security Group with same inbound and outbound rules as current Group
+      ## Outputs
+      * Output: GroupId of new Group
+    inputs:
+      Runtime: python3.7
+      Handler: handler
+      InputPayload:
+        GroupId: "{{ GroupId }}"
+      Script: |-
+        import boto3
+        from botocore.exceptions import ClientError
+        from time import sleep
+
+        ec2_client = boto3.client("ec2")
+        ec2 = boto3.resource("ec2")
+
+        def get_permissions(group_id):
+            default_group = ec2_client.describe_security_groups(
+                GroupIds=[group_id]).get("SecurityGroups")[0]
+            return default_group, default_group.get("IpPermissions"), default_group.get("IpPermissionsEgress")
+
+
+        def handler(event, context):
+            group_id = event.get("GroupId")
+            default_group, ingress_permissions, egress_permissions = get_permissions(
+                group_id)
+            response = ec2_client.create_security_group(GroupName='default-replacement',
+                                                            Description='Replacement for default security group', VpcId=default_group['VpcId'])
+            new_security_group = ec2.SecurityGroup(response['GroupId'])
+            new_security_group.authorize_ingress(ingress_permissions)
+            new_security_group.authorize_egress(egress_permissions)
+            return {"output": new_security_group.get('group_id')}
+    outputs:
+      - Name: Output
+        Selector: $.Payload.output
+        Type: String
+    nextStep: AttachSecurityGroup
+  
+  - name: AttachSecurityGroup
+    action: "aws:executeScript"
+    isCritical: True
+    onFailure: Abort
+    maxAttempts: 3
+    timeoutSeconds: 180
+    isEnd: true
+    description: |
+      ## Attach new security group to given list resources
+      Take newly created security groups and attach to all related resources
+      ## Outputs
+      * Output: Message indicating success or failure
+    inputs:
+      Runtime: python3.7
+      Handler: handler
+      InputPayload:
+        GroupId: "{{ CreateNewSecurityGroup.Output }}"
+        Resources: "{{ Resources }}"
+      Script: |-
+        import boto3
+        from botocore.exceptions import ClientError
+
+        def handler(event, context):
+          
+
+
+    
+    
+  ## TODO: attach new group to all resources
+
